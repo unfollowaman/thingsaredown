@@ -1,1 +1,15 @@
-{"scripts":{"dev":"python3 -m http.server 5173","build":"node -e \"require('fs').mkdirSync('dist',{recursive:true}); require('fs').copyFileSync('index.html','dist/index.html'); require('fs').cpSync('src','dist/src',{recursive:true});\""},"dependencies":{},"devDependencies":{}}
+{
+  "name": "thingsaredown",
+  "version": "1.0.0",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "build": "node -e \"require('fs').mkdirSync('dist',{recursive:true}); require('fs').copyFileSync('index.html','dist/index.html'); require('fs').cpSync('src','dist/src',{recursive:true});\""
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {}
+}

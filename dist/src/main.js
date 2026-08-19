@@ -9,9 +9,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const thumb = mediaPreview ? mediaPreview.querySelector('.thumb') : null;
   const mediaTitle = mediaPreview ? mediaPreview.querySelector('strong') : null;
   const mediaDetails = mediaPreview ? mediaPreview.querySelector('small') : null;
+  const qualitySelect = mediaPreview ? mediaPreview.querySelector('select') : null;
   const progressFill = document.querySelector('.progress-demo span');
   const platformButtons = document.querySelectorAll('.platform-tile');
   const utilityButtons = document.querySelectorAll('.utility-button, .directory-nav button');
+
+  let currentDebounceTimer = null;
+  let activeFetchedUrl = '';
 
   const platformSamples = {
     instagram: {
@@ -48,6 +52,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
+  function isYouTubeUrl(val) {
+    const inputVal = (val || '').toLowerCase().trim();
+    return inputVal.includes('youtube.com') || inputVal.includes('youtu.be');
+  }
+
   function detectPlatform(val) {
     const inputVal = (val || '').toLowerCase().trim();
     if (inputVal.includes('instagram.com') || inputVal.includes('instagr.am')) {
@@ -62,21 +71,68 @@ document.addEventListener('DOMContentLoaded', () => {
     return null;
   }
 
-  function updateUIForInput(val) {
-    const match = detectPlatform(val);
-    if (match) {
-      if (detectPill) detectPill.textContent = match.label;
-      if (mediaTitle) mediaTitle.textContent = match.title;
-      if (mediaDetails) mediaDetails.textContent = match.details;
-      if (thumb) {
-        thumb.style.background = match.thumbBg;
-        thumb.textContent = match.icon;
+  async function fetchYouTubeInfo(url) {
+    if (!isYouTubeUrl(url)) return;
+    if (activeFetchedUrl === url) return;
+
+    if (detectPill) detectPill.textContent = '⏳ Fetching YouTube details...';
+    if (mediaTitle) mediaTitle.textContent = 'Loading video metadata...';
+    if (mediaDetails) mediaDetails.textContent = 'Connecting to YouTube server...';
+
+    try {
+      const response = await fetch(`/api/info?url=${encodeURIComponent(url)}`);
+      const data = await response.json();
+
+      if (!response.ok || data.error) {
+        if (detectPill) detectPill.textContent = '⚠️ Unable to fetch YouTube video';
+        if (mediaTitle) mediaTitle.textContent = 'Error loading video details';
+        if (mediaDetails) mediaDetails.textContent = data.error || 'Invalid or unavailable YouTube link';
+        return;
       }
-    } else if (val.trim().length > 0) {
-      if (detectPill) detectPill.textContent = '✓ Media link detected';
-      if (mediaTitle) mediaTitle.textContent = 'Media stream detected';
-      if (mediaDetails) mediaDetails.textContent = 'MP4 · Auto Quality · Variable size';
-    } else {
+
+      activeFetchedUrl = url;
+
+      if (detectPill) detectPill.textContent = '✓ YouTube video ready';
+      if (mediaTitle) mediaTitle.textContent = data.title;
+      if (mediaDetails) mediaDetails.textContent = `${data.uploader} · ${data.duration} · ${data.filesize}`;
+
+      if (thumb) {
+        if (data.thumbnail) {
+          thumb.style.background = `url("${data.thumbnail}") center/cover no-repeat`;
+          thumb.textContent = '';
+        } else {
+          thumb.style.background = 'linear-gradient(135deg, var(--yt), #e60000)';
+          thumb.textContent = '▶';
+        }
+      }
+
+      if (qualitySelect && data.qualities && data.qualities.length > 0) {
+        qualitySelect.innerHTML = '';
+        data.qualities.forEach(q => {
+          const opt = document.createElement('option');
+          opt.value = q;
+          opt.textContent = q;
+          qualitySelect.appendChild(opt);
+        });
+        const audioOpt = document.createElement('option');
+        audioOpt.value = 'Audio';
+        audioOpt.textContent = 'Audio (.mp3)';
+        qualitySelect.appendChild(audioOpt);
+      }
+    } catch (err) {
+      console.error('Fetch info error:', err);
+      if (detectPill) detectPill.textContent = '⚠️ Connection error';
+      if (mediaTitle) mediaTitle.textContent = 'Could not reach server';
+      if (mediaDetails) mediaDetails.textContent = 'Ensure backend server is running.';
+    }
+  }
+
+  function handleInputChange(val) {
+    clearTimeout(currentDebounceTimer);
+    const trimmed = (val || '').trim();
+
+    if (!trimmed) {
+      activeFetchedUrl = '';
       if (detectPill) detectPill.textContent = '✓ Instagram link detected';
       if (mediaTitle) mediaTitle.textContent = 'Summer reel pack · 00:34';
       if (mediaDetails) mediaDetails.textContent = 'MP4 · 1080p · 24.8 MB';
@@ -84,12 +140,34 @@ document.addEventListener('DOMContentLoaded', () => {
         thumb.style.background = 'linear-gradient(135deg, var(--yt), #8b5cf6)';
         thumb.textContent = '▶';
       }
+      return;
+    }
+
+    if (isYouTubeUrl(trimmed)) {
+      currentDebounceTimer = setTimeout(() => {
+        fetchYouTubeInfo(trimmed);
+      }, 400);
+    } else {
+      const match = detectPlatform(trimmed);
+      if (match) {
+        if (detectPill) detectPill.textContent = match.label;
+        if (mediaTitle) mediaTitle.textContent = match.title;
+        if (mediaDetails) mediaDetails.textContent = match.details;
+        if (thumb) {
+          thumb.style.background = match.thumbBg;
+          thumb.textContent = match.icon;
+        }
+      } else {
+        if (detectPill) detectPill.textContent = '✓ Media link detected';
+        if (mediaTitle) mediaTitle.textContent = 'Media stream detected';
+        if (mediaDetails) mediaDetails.textContent = 'MP4 · Auto Quality · Variable size';
+      }
     }
   }
 
   if (urlInput) {
     urlInput.addEventListener('input', (e) => {
-      updateUIForInput(e.target.value);
+      handleInputChange(e.target.value);
     });
   }
 
@@ -100,7 +178,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const text = await navigator.clipboard.readText();
           if (text && urlInput) {
             urlInput.value = text;
-            updateUIForInput(text);
+            handleInputChange(text);
           }
         } else {
           urlInput.focus();
@@ -123,7 +201,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const sample = platformSamples[key];
         if (urlInput) {
           urlInput.value = sample.url;
-          updateUIForInput(sample.url);
+          handleInputChange(sample.url);
         }
         document.getElementById('top')?.scrollIntoView({ behavior: 'smooth' });
       }
@@ -132,7 +210,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (downloadBtn) {
     downloadBtn.addEventListener('click', () => {
-      if (!urlInput || !urlInput.value.trim()) {
+      const url = urlInput ? urlInput.value.trim() : '';
+
+      if (!url) {
         urlInput.placeholder = 'Please paste a valid URL first...';
         urlInput.focus();
         setTimeout(() => {
@@ -143,23 +223,45 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const origText = downloadBtn.innerHTML;
       downloadBtn.disabled = true;
-      downloadBtn.innerHTML = 'Downloading... <span>⌁</span>';
+      downloadBtn.innerHTML = 'Starting download... <span>⌁</span>';
 
       if (progressFill) {
-        progressFill.style.transition = 'width 1.2s ease-in-out';
+        progressFill.style.transition = 'width 2s ease-in-out';
         progressFill.style.width = '0%';
         setTimeout(() => {
           progressFill.style.width = '100%';
         }, 50);
       }
 
-      setTimeout(() => {
-        downloadBtn.innerHTML = 'Downloaded ✓';
+      if (isYouTubeUrl(url)) {
+        const selectedQuality = qualitySelect ? qualitySelect.value : '1080p';
+        const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&quality=${encodeURIComponent(selectedQuality)}`;
+
+        // Trigger file download in browser
+        const downloadAnchor = document.createElement('a');
+        downloadAnchor.href = downloadUrl;
+        downloadAnchor.download = '';
+        document.body.appendChild(downloadAnchor);
+        downloadAnchor.click();
+        document.body.removeChild(downloadAnchor);
+
         setTimeout(() => {
-          downloadBtn.disabled = false;
-          downloadBtn.innerHTML = origText;
-        }, 2000);
-      }, 1300);
+          downloadBtn.innerHTML = 'Downloading in progress ✓';
+          setTimeout(() => {
+            downloadBtn.disabled = false;
+            downloadBtn.innerHTML = origText;
+          }, 3000);
+        }, 1500);
+      } else {
+        // Fallback simulation for non-youtube links
+        setTimeout(() => {
+          downloadBtn.innerHTML = 'Downloaded ✓';
+          setTimeout(() => {
+            downloadBtn.disabled = false;
+            downloadBtn.innerHTML = origText;
+          }, 2000);
+        }, 1300);
+      }
     });
   }
 
