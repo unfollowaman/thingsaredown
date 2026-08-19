@@ -1,5 +1,7 @@
 // Things Are Down - Interactive Application Logic
 
+import { normalizeInstagramUrl } from './instagram.js';
+
 document.addEventListener('DOMContentLoaded', () => {
   const urlInput = document.getElementById('media-url');
   const downloadBtn = document.querySelector('.url-input-wrap button');
@@ -10,6 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const mediaTitle = mediaPreview ? mediaPreview.querySelector('strong') : null;
   const mediaDetails = mediaPreview ? mediaPreview.querySelector('small') : null;
   const progressFill = document.querySelector('.progress-demo span');
+  const qualitySelect = mediaPreview ? mediaPreview.querySelector('select') : null;
   const platformButtons = document.querySelectorAll('.platform-tile');
   const utilityButtons = document.querySelectorAll('.utility-button, .directory-nav button');
 
@@ -50,7 +53,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function detectPlatform(val) {
     const inputVal = (val || '').toLowerCase().trim();
-    if (inputVal.includes('instagram.com') || inputVal.includes('instagr.am')) {
+    const instagramResult = normalizeInstagramUrl(inputVal);
+
+    if (instagramResult.ok) {
       return platformSamples.instagram;
     } else if (inputVal.includes('youtube.com') || inputVal.includes('youtu.be')) {
       return platformSamples.youtube;
@@ -84,6 +89,12 @@ document.addEventListener('DOMContentLoaded', () => {
         thumb.style.background = 'linear-gradient(135deg, var(--yt), #8b5cf6)';
         thumb.textContent = '▶';
       }
+    }
+  }
+
+  function setDownloadState(message, isComplete = false) {
+    if (downloadBtn) {
+      downloadBtn.innerHTML = isComplete ? `${message} <span>✓</span>` : `${message} <span>⌁</span>`;
     }
   }
 
@@ -131,7 +142,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   if (downloadBtn) {
-    downloadBtn.addEventListener('click', () => {
+    downloadBtn.addEventListener('click', async () => {
       if (!urlInput || !urlInput.value.trim()) {
         urlInput.placeholder = 'Please paste a valid URL first...';
         urlInput.focus();
@@ -143,23 +154,64 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const origText = downloadBtn.innerHTML;
       downloadBtn.disabled = true;
-      downloadBtn.innerHTML = 'Downloading... <span>⌁</span>';
+      setDownloadState('Preparing...');
 
       if (progressFill) {
         progressFill.style.transition = 'width 1.2s ease-in-out';
-        progressFill.style.width = '0%';
-        setTimeout(() => {
-          progressFill.style.width = '100%';
-        }, 50);
+        progressFill.style.width = '25%';
       }
 
-      setTimeout(() => {
-        downloadBtn.innerHTML = 'Downloaded ✓';
+      try {
+        const instagramResult = normalizeInstagramUrl(urlInput.value);
+
+        if (!instagramResult.ok) {
+          throw new Error(instagramResult.error);
+        }
+
+        const response = await fetch('/api/download/instagram', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            url: urlInput.value,
+            quality: qualitySelect ? qualitySelect.value : '1080p'
+          })
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error || 'Unable to prepare this Instagram download.');
+        }
+
+        if (progressFill) {
+          progressFill.style.width = payload.downloadUrl ? '100%' : '65%';
+        }
+
+        if (mediaTitle) mediaTitle.textContent = payload.title;
+        if (mediaDetails) {
+          mediaDetails.textContent = payload.downloadUrl
+            ? `${payload.requestedQuality} · Ready`
+            : `${payload.requestedQuality} · Extractor setup required`;
+        }
+
+        setDownloadState(payload.downloadUrl ? 'Downloaded' : 'Setup needed', Boolean(payload.downloadUrl));
         setTimeout(() => {
           downloadBtn.disabled = false;
           downloadBtn.innerHTML = origText;
         }, 2000);
-      }, 1300);
+      } catch (err) {
+        if (progressFill) {
+          progressFill.style.width = '0%';
+        }
+
+        if (mediaDetails) mediaDetails.textContent = err.message;
+        setDownloadState('Could not download');
+        setTimeout(() => {
+          downloadBtn.disabled = false;
+          downloadBtn.innerHTML = origText;
+        }, 2500);
+      }
     });
   }
 

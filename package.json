@@ -1,1 +1,11 @@
-{"scripts":{"dev":"python3 -m http.server 5173","build":"node -e \"require('fs').mkdirSync('dist',{recursive:true}); require('fs').copyFileSync('index.html','dist/index.html'); require('fs').cpSync('src','dist/src',{recursive:true});\""},"dependencies":{},"devDependencies":{}}
+{
+  "type": "module",
+  "scripts": {
+    "dev": "node server/index.js",
+    "start": "node server/index.js",
+    "build": "node -e \"import('node:fs').then(fs => { fs.mkdirSync('dist',{recursive:true}); fs.copyFileSync('index.html','dist/index.html'); fs.cpSync('src','dist/src',{recursive:true}); fs.cpSync('server','dist/server',{recursive:true}); })\"",
+    "test": "node --test"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
