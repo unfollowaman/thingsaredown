@@ -47,3 +47,44 @@ The repository now has the first implementation layer for Instagram downloads:
 - URL normalization and API behavior have automated Node tests.
 
 The real extractor and file delivery pieces are still intentionally pending because they require choosing and configuring a compliant media extraction provider or first-party ingestion strategy.
+
+## X/Twitter downloader implementation plan
+
+1. **URL detection and normalization**
+   - Accept direct `x.com` and `twitter.com` status URLs.
+   - Normalize legacy Twitter hosts to canonical `https://x.com/{user}/status/{id}` URLs.
+   - Reject profiles, search/explore pages, invalid hosts, and missing or non-numeric status IDs.
+
+2. **Backend API**
+   - Add `/api/download/x` so the browser can prepare X/Twitter downloads without passing through the Instagram-only endpoint.
+   - Return structured JSON errors for invalid input and pending metadata while extractor setup is incomplete.
+
+3. **Frontend integration**
+   - Detect valid X/Twitter status URLs with the same parser used by the backend.
+   - Dispatch each supported platform to its own API endpoint.
+   - Keep unsupported platforms, such as YouTube and Telegram, in clear setup-needed states instead of sending them to the wrong endpoint.
+   - Render preparing, extractor setup required, ready, failed, and complete states from API payloads.
+
+4. **Media metadata extraction**
+   - Connect `/api/download/x` to a compliant X/Twitter media extraction provider or first-party ingestion service.
+   - Resolve tweet text/title, thumbnail, duration, variants, dimensions, bitrate, and media type.
+   - Handle tweets with multiple media items before exposing format choices.
+
+5. **Download delivery**
+   - Return a temporary download URL when provider terms and media permissions allow it, or stream the selected variant through the backend.
+   - Add safe filenames, content types, expiry, rate limiting, and provider-failure handling.
+
+6. **Tests**
+   - Cover parser success and failure cases for `x.com` and `twitter.com`.
+   - Cover API success and failure responses.
+   - Add browser-flow tests once a real extractor is connected.
+
+## Current X/Twitter status
+
+The repository now has the first implementation layer for X/Twitter downloads:
+
+- `/api/download/x` accepts validated X/Twitter status requests and returns normalized pending metadata.
+- The browser download button routes X/Twitter links to the X/Twitter endpoint instead of failing through the Instagram-only path.
+- URL normalization and API behavior have automated Node tests.
+
+The real extractor and file delivery pieces are still intentionally pending because they require choosing and configuring a compliant X/Twitter media extraction provider or first-party ingestion strategy.

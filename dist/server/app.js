@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildPendingInstagramDownload, normalizeInstagramUrl } from '../src/instagram.js';
+import { buildPendingXDownload, normalizeXUrl } from '../src/x.js';
 
 const ROOT = normalize(join(fileURLToPath(new URL('..', import.meta.url))));
 const PUBLIC_ROOT = ROOT;
@@ -52,6 +53,24 @@ async function handleInstagramDownload(req, res) {
   sendJson(res, 202, buildPendingInstagramDownload(normalized, body.quality));
 }
 
+async function handleXDownload(req, res) {
+  let body;
+  try {
+    body = await readJson(req);
+  } catch {
+    sendJson(res, 400, { error: 'Request body must be valid JSON.' });
+    return;
+  }
+
+  const normalized = normalizeXUrl(body.url);
+  if (!normalized.ok) {
+    sendJson(res, 400, { error: normalized.error });
+    return;
+  }
+
+  sendJson(res, 202, buildPendingXDownload(normalized, body.quality));
+}
+
 async function serveStatic(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const safePath = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
@@ -81,6 +100,11 @@ export function createApp() {
   return createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/api/download/instagram') {
       await handleInstagramDownload(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/download/x') {
+      await handleXDownload(req, res);
       return;
     }
 
