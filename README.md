@@ -1,1 +1,49 @@
-# thingsaredown is a website that lets you download content from YouTube, Twitter and Instagram.
+# Things Are Down
+
+Things Are Down is a website prototype for downloading content from YouTube, X/Twitter, Telegram, and Instagram.
+
+## Instagram downloader implementation plan
+
+1. **Backend API**
+   - Add a server route that receives Instagram download requests.
+   - Validate JSON input and return structured JSON errors.
+   - Keep static app hosting and API hosting on the same origin so the browser can call `/api/download/instagram`.
+
+2. **Instagram URL normalization**
+   - Accept only Instagram hosts.
+   - Normalize supported URL shapes for posts, Reels, videos, and stories.
+   - Return clear user-facing errors for profile URLs, unsupported paths, invalid URLs, and missing media identifiers.
+
+3. **Media metadata extraction**
+   - Connect the API to a compliant Instagram media extraction provider or first-party ingestion service.
+   - Resolve canonical metadata such as media type, title/caption, thumbnail, duration, and available formats.
+   - Handle multi-item carousel posts before exposing download choices.
+
+4. **Frontend integration**
+   - Replace the prototype-only download animation with a real API request.
+   - Show states for preparing, extractor setup needed, ready, failed, and complete.
+   - Send the selected quality with each download request.
+
+5. **Download delivery**
+   - Return a temporary download URL when extraction can safely expose one, or stream the file through the backend.
+   - Set download filenames and content types.
+   - Add expiry and rate-limit protections before exposing generated files.
+
+6. **Error handling**
+   - Handle private posts, login-required stories, removed media, bad URLs, provider failures, and rate limits.
+   - Keep errors specific enough for users without exposing backend internals.
+
+7. **Tests**
+   - Cover URL parser success/failure cases.
+   - Cover API success/failure responses.
+   - Add integration tests around the browser flow once a real extractor is connected.
+
+## Current Instagram status
+
+The repository now has the first implementation layer for Instagram downloads:
+
+- `/api/download/instagram` accepts validated Instagram requests and returns normalized pending metadata.
+- The browser download button calls the API for Instagram URLs instead of only running a local fake completion.
+- URL normalization and API behavior have automated Node tests.
+
+The real extractor and file delivery pieces are still intentionally pending because they require choosing and configuring a compliant media extraction provider or first-party ingestion strategy.
