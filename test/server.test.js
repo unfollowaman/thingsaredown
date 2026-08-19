@@ -59,3 +59,56 @@ test('POST /api/download/instagram rejects unsupported URLs', async () => {
     app.close();
   }
 });
+
+test('POST /api/download/x returns pending metadata for valid X status URLs', async () => {
+  const app = createApp();
+  const port = await listen(app);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/download/x`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        url: 'https://twitter.com/tech/status/1758291048291?s=20',
+        quality: '720p'
+      })
+    });
+    const payload = await response.json();
+
+    assert.equal(response.status, 202);
+    assert.equal(payload.platform, 'x');
+    assert.equal(payload.type, 'status');
+    assert.equal(payload.username, 'tech');
+    assert.equal(payload.statusId, '1758291048291');
+    assert.equal(payload.canonicalUrl, 'https://x.com/tech/status/1758291048291');
+    assert.equal(payload.requestedQuality, '720p');
+    assert.equal(payload.downloadUrl, null);
+  } finally {
+    app.close();
+  }
+});
+
+test('POST /api/download/x rejects unsupported URLs', async () => {
+  const app = createApp();
+  const port = await listen(app);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/download/x`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        url: 'https://example.com/status/1758291048291'
+      })
+    });
+    const payload = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.match(payload.error, /Only X\/Twitter URLs/);
+  } finally {
+    app.close();
+  }
+});

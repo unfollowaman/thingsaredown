@@ -1,6 +1,7 @@
 // Things Are Down - Interactive Application Logic
 
 import { normalizeInstagramUrl } from './instagram.js';
+import { normalizeXUrl } from './x.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const urlInput = document.getElementById('media-url');
@@ -18,6 +19,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const platformSamples = {
     instagram: {
+      platform: 'instagram',
+      endpoint: '/api/download/instagram',
       url: 'https://instagram.com/reel/C3x9P2xL8aZ',
       label: '✓ Instagram link detected',
       title: 'Summer reel pack · 00:34',
@@ -26,6 +29,8 @@ document.addEventListener('DOMContentLoaded', () => {
       icon: '◎'
     },
     youtube: {
+      platform: 'youtube',
+      endpoint: null,
       url: 'https://youtube.com/watch?v=dQw4w9WgXcQ',
       label: '✓ YouTube link detected',
       title: 'Ultra HD Cinematic Video · 03:45',
@@ -34,6 +39,8 @@ document.addEventListener('DOMContentLoaded', () => {
       icon: '▶'
     },
     x: {
+      platform: 'x',
+      endpoint: '/api/download/x',
       url: 'https://x.com/tech/status/1758291048291',
       label: '✓ X (Twitter) link detected',
       title: 'Product Launch Reveal · 00:15',
@@ -42,6 +49,8 @@ document.addEventListener('DOMContentLoaded', () => {
       icon: '𝕏'
     },
     telegram: {
+      platform: 'telegram',
+      endpoint: null,
       url: 'https://t.me/media_channel/8492',
       label: '✓ Telegram link detected',
       title: 'Broadcast Highlight Clip · 01:20',
@@ -54,13 +63,14 @@ document.addEventListener('DOMContentLoaded', () => {
   function detectPlatform(val) {
     const inputVal = (val || '').toLowerCase().trim();
     const instagramResult = normalizeInstagramUrl(inputVal);
+    const xResult = normalizeXUrl(inputVal);
 
     if (instagramResult.ok) {
       return platformSamples.instagram;
+    } else if (xResult.ok) {
+      return platformSamples.x;
     } else if (inputVal.includes('youtube.com') || inputVal.includes('youtu.be')) {
       return platformSamples.youtube;
-    } else if (inputVal.includes('x.com') || inputVal.includes('twitter.com')) {
-      return platformSamples.x;
     } else if (inputVal.includes('t.me') || inputVal.includes('telegram.org') || inputVal.includes('telegram.me')) {
       return platformSamples.telegram;
     }
@@ -96,6 +106,53 @@ document.addEventListener('DOMContentLoaded', () => {
     if (downloadBtn) {
       downloadBtn.innerHTML = isComplete ? `${message} <span>✓</span>` : `${message} <span>⌁</span>`;
     }
+  }
+
+  function getDownloadTarget(val) {
+    const instagramResult = normalizeInstagramUrl(val);
+    if (instagramResult.ok) {
+      return {
+        sample: platformSamples.instagram,
+        normalized: instagramResult
+      };
+    }
+
+    const xResult = normalizeXUrl(val);
+    if (xResult.ok) {
+      return {
+        sample: platformSamples.x,
+        normalized: xResult
+      };
+    }
+
+    if ((val || '').toLowerCase().includes('x.com') || (val || '').toLowerCase().includes('twitter.com')) {
+      throw new Error(xResult.error);
+    }
+
+    if ((val || '').toLowerCase().includes('youtube.com') || (val || '').toLowerCase().includes('youtu.be')) {
+      throw new Error('YouTube downloads are not connected yet.');
+    }
+
+    if ((val || '').toLowerCase().includes('t.me') || (val || '').toLowerCase().includes('telegram.org') || (val || '').toLowerCase().includes('telegram.me')) {
+      throw new Error('Telegram downloads are not connected yet.');
+    }
+
+    throw new Error('Paste a supported Instagram or X/Twitter media URL.');
+  }
+
+  function renderDownloadPayload(payload) {
+    if (progressFill) {
+      progressFill.style.width = payload.downloadUrl ? '100%' : '65%';
+    }
+
+    if (mediaTitle) mediaTitle.textContent = payload.title;
+    if (mediaDetails) {
+      mediaDetails.textContent = payload.downloadUrl
+        ? `${payload.requestedQuality} · Ready`
+        : `${payload.requestedQuality} · Extractor setup required`;
+    }
+
+    setDownloadState(payload.downloadUrl ? 'Downloaded' : 'Setup needed', Boolean(payload.downloadUrl));
   }
 
   if (urlInput) {
@@ -162,13 +219,13 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       try {
-        const instagramResult = normalizeInstagramUrl(urlInput.value);
+        const target = getDownloadTarget(urlInput.value);
 
-        if (!instagramResult.ok) {
-          throw new Error(instagramResult.error);
+        if (!target.sample.endpoint) {
+          throw new Error(`${target.sample.platform} downloads are not connected yet.`);
         }
 
-        const response = await fetch('/api/download/instagram', {
+        const response = await fetch(target.sample.endpoint, {
           method: 'POST',
           headers: {
             'content-type': 'application/json'
@@ -181,21 +238,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const payload = await response.json();
 
         if (!response.ok) {
-          throw new Error(payload.error || 'Unable to prepare this Instagram download.');
+          throw new Error(payload.error || `Unable to prepare this ${target.sample.label.replace('✓ ', '').replace(' link detected', '')} download.`);
         }
 
-        if (progressFill) {
-          progressFill.style.width = payload.downloadUrl ? '100%' : '65%';
-        }
-
-        if (mediaTitle) mediaTitle.textContent = payload.title;
-        if (mediaDetails) {
-          mediaDetails.textContent = payload.downloadUrl
-            ? `${payload.requestedQuality} · Ready`
-            : `${payload.requestedQuality} · Extractor setup required`;
-        }
-
-        setDownloadState(payload.downloadUrl ? 'Downloaded' : 'Setup needed', Boolean(payload.downloadUrl));
+        renderDownloadPayload(payload);
         setTimeout(() => {
           downloadBtn.disabled = false;
           downloadBtn.innerHTML = origText;
