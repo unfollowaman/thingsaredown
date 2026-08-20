@@ -10,7 +10,7 @@ function listen(app) {
   });
 }
 
-test('POST /api/download/instagram returns pending metadata for valid Instagram URLs', async () => {
+test('POST /api/download/instagram returns ready download payload for valid Instagram URLs', async () => {
   const app = createApp();
   const port = await listen(app);
 
@@ -27,11 +27,28 @@ test('POST /api/download/instagram returns pending metadata for valid Instagram 
     });
     const payload = await response.json();
 
-    assert.equal(response.status, 202);
+    assert.equal(response.status, 200);
+    assert.equal(payload.status, 'ready');
     assert.equal(payload.platform, 'instagram');
     assert.equal(payload.type, 'reel');
     assert.equal(payload.shortcode, 'C3x9P2xL8aZ');
-    assert.equal(payload.downloadUrl, null);
+    assert.ok(payload.downloadUrl);
+    assert.ok(payload.downloadUrl.startsWith('/api/download/file'));
+  } finally {
+    app.close();
+  }
+});
+
+test('GET /api/download/file proxies media stream with content-disposition header', async () => {
+  const app = createApp();
+  const port = await listen(app);
+
+  try {
+    const targetMediaUrl = `http://127.0.0.1:${port}/index.html`;
+    const response = await fetch(`http://127.0.0.1:${port}/api/download/file?url=${encodeURIComponent(targetMediaUrl)}&filename=test-reel.mp4`);
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-disposition'), 'attachment; filename="test-reel.mp4"');
   } finally {
     app.close();
   }

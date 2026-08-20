@@ -108,6 +108,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function triggerBrowserDownload(downloadUrl, filename) {
+    if (!downloadUrl) return;
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    if (filename) {
+      a.download = filename;
+    }
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
   function getDownloadTarget(val) {
     const instagramResult = normalizeInstagramUrl(val);
     if (instagramResult.ok) {
@@ -145,14 +157,23 @@ document.addEventListener('DOMContentLoaded', () => {
       progressFill.style.width = payload.downloadUrl ? '100%' : '65%';
     }
 
-    if (mediaTitle) mediaTitle.textContent = payload.title;
+    if (mediaTitle) mediaTitle.textContent = payload.title || 'Instagram Media';
     if (mediaDetails) {
       mediaDetails.textContent = payload.downloadUrl
-        ? `${payload.requestedQuality} · Ready`
-        : `${payload.requestedQuality} · Extractor setup required`;
+        ? `${payload.requestedQuality || '1080p'} · Ready`
+        : `${payload.requestedQuality || '1080p'} · Extractor setup required`;
     }
 
-    setDownloadState(payload.downloadUrl ? 'Downloaded' : 'Setup needed', Boolean(payload.downloadUrl));
+    if (payload.thumbnail && thumb) {
+      thumb.style.background = `url("${payload.thumbnail}") center/cover no-repeat`;
+      thumb.textContent = '';
+    }
+
+    setDownloadState(payload.downloadUrl ? 'Downloading' : 'Setup needed', Boolean(payload.downloadUrl));
+
+    if (payload.downloadUrl) {
+      triggerBrowserDownload(payload.downloadUrl, payload.filename);
+    }
   }
 
   if (urlInput) {
