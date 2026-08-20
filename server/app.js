@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildPendingInstagramDownload, normalizeInstagramUrl } from '../src/instagram.js';
+import { extractInstagramMedia, normalizeInstagramUrl } from '../src/instagram.js';
 import { buildPendingXDownload, normalizeXUrl } from '../src/x.js';
 
 const ROOT = normalize(join(fileURLToPath(new URL('..', import.meta.url))));
@@ -15,6 +15,28 @@ const MIME_TYPES = {
   '.js': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8'
 };
+
+const ALLOWED_STREAM_DOMAINS = [
+  'cdninstagram.com',
+  'fbcdn.net',
+  'instagram.com',
+  'googleapis.com',
+  '127.0.0.1',
+  'localhost'
+];
+
+function isAllowedUrl(urlString) {
+  try {
+    const parsed = new URL(urlString);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+    const hostname = parsed.hostname.toLowerCase();
+    return ALLOWED_STREAM_DOMAINS.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+  } catch {
+    return false;
+  }
+}
 
 function sendJson(res, statusCode, body) {
   res.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
@@ -50,7 +72,12 @@ async function handleInstagramDownload(req, res) {
     return;
   }
 
-  sendJson(res, 202, buildPendingInstagramDownload(normalized, body.quality));
+  try {
+    const downloadData = await extractInstagramMedia(normalized, body.quality);
+    sendJson(res, 200, downloadData);
+  } catch (err) {
+    sendJson(res, 422, { error: err.message || 'Unable to extract Instagram Reel media.' });
+  }
 }
 
 async function handleXDownload(req, res) {
@@ -69,6 +96,71 @@ async function handleXDownload(req, res) {
   }
 
   sendJson(res, 202, buildPendingXDownload(normalized, body.quality));
+}
+
+async function handleFileDelivery(req, res) {
+  const reqUrl = new URL(req.url, 'http://localhost');
+  const targetUrl = reqUrl.searchParams.get('url');
+  const filename = reqUrl.searchParams.get('filename') || 'download.mp4';
+
+  if (!targetUrl) {
+    sendJson(res, 400, { error: 'Missing target file URL.' });
+    return;
+  }
+
+  if (!isAllowedUrl(targetUrl)) {
+    sendJson(res, 403, { error: 'Access to the requested media URL is forbidden.' });
+    return;
+  }
+
+  let mediaResponse;
+  try {
+    mediaResponse = await fetch(targetUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+      }
+    });
+  } catch {
+    sendJson(res, 502, { error: 'Failed to stream media file.' });
+    return;
+  }
+
+  if (!mediaResponse.ok) {
+    sendJson(res, 502, { error: `Remote media server returned HTTP ${mediaResponse.status}.` });
+    return;
+  }
+
+  const isAudio = filename.endsWith('.mp3');
+  const contentType = isAudio
+    ? 'audio/mpeg'
+    : (mediaResponse.headers.get('content-type') || 'video/mp4');
+  const contentLength = mediaResponse.headers.get('content-length');
+
+  const responseHeaders = {
+    'content-type': contentType,
+    'content-disposition': `attachment; filename="${encodeURIComponent(filename)}"`
+  };
+
+  if (contentLength && !isAudio) {
+    responseHeaders['content-length'] = contentLength;
+  }
+
+  res.writeHead(200, responseHeaders);
+
+  if (mediaResponse.body && typeof mediaResponse.body.getReader === 'function') {
+    const reader = mediaResponse.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(value);
+    }
+    res.end();
+  } else if (mediaResponse.body) {
+    const arrayBuffer = await mediaResponse.arrayBuffer();
+    res.end(Buffer.from(arrayBuffer));
+  } else {
+    res.end();
+  }
 }
 
 async function serveStatic(req, res) {
@@ -105,6 +197,12 @@ export function createApp() {
 
     if (req.method === 'POST' && req.url === '/api/download/x') {
       await handleXDownload(req, res);
+      return;
+    }
+
+    const parsedUrl = new URL(req.url, 'http://localhost');
+    if ((req.method === 'GET' || req.method === 'HEAD') && parsedUrl.pathname === '/api/download/file') {
+      await handleFileDelivery(req, res);
       return;
     }
 
