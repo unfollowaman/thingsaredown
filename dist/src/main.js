@@ -121,32 +121,37 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function getDownloadTarget(val) {
-    const instagramResult = normalizeInstagramUrl(val);
-    if (instagramResult.ok) {
-      return {
-        sample: platformSamples.instagram,
-        normalized: instagramResult
-      };
+    const platform = detectPlatform(val);
+
+    if (platform) {
+      if (platform.platform === 'instagram') {
+        const instagramResult = normalizeInstagramUrl(val);
+        if (instagramResult.ok) {
+          return {
+            sample: platform,
+            normalized: instagramResult
+          };
+        }
+      } else if (platform.platform === 'x') {
+        const xResult = normalizeXUrl(val);
+        if (xResult.ok) {
+          return {
+            sample: platform,
+            normalized: xResult
+          };
+        }
+        throw new Error(xResult.error);
+      } else if (platform.platform === 'youtube') {
+        throw new Error('YouTube downloads are not connected yet.');
+      } else if (platform.platform === 'telegram') {
+        throw new Error('Telegram downloads are not connected yet.');
+      }
     }
 
-    const xResult = normalizeXUrl(val);
-    if (xResult.ok) {
-      return {
-        sample: platformSamples.x,
-        normalized: xResult
-      };
-    }
-
-    if ((val || '').toLowerCase().includes('x.com') || (val || '').toLowerCase().includes('twitter.com')) {
+    const inputVal = (val || '').toLowerCase();
+    if (inputVal.includes('x.com') || inputVal.includes('twitter.com')) {
+      const xResult = normalizeXUrl(val);
       throw new Error(xResult.error);
-    }
-
-    if ((val || '').toLowerCase().includes('youtube.com') || (val || '').toLowerCase().includes('youtu.be')) {
-      throw new Error('YouTube downloads are not connected yet.');
-    }
-
-    if ((val || '').toLowerCase().includes('t.me') || (val || '').toLowerCase().includes('telegram.org') || (val || '').toLowerCase().includes('telegram.me')) {
-      throw new Error('Telegram downloads are not connected yet.');
     }
 
     throw new Error('Paste a supported Instagram or X/Twitter media URL.');
