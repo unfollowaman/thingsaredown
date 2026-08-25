@@ -5,6 +5,7 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractInstagramMedia, normalizeInstagramUrl } from '../src/instagram.js';
 import { buildPendingXDownload, normalizeXUrl } from '../src/x.js';
+import { extractYoutubeMedia, normalizeYoutubeUrl } from '../src/youtube.js';
 
 const ROOT = normalize(join(fileURLToPath(new URL('..', import.meta.url))));
 const PUBLIC_ROOT = ROOT;
@@ -21,6 +22,9 @@ const ALLOWED_STREAM_DOMAINS = [
   'fbcdn.net',
   'instagram.com',
   'googleapis.com',
+  'youtube.com',
+  'youtu.be',
+  'googlevideo.com',
   '127.0.0.1',
   'localhost'
 ];
@@ -96,6 +100,29 @@ async function handleXDownload(req, res) {
   }
 
   sendJson(res, 202, buildPendingXDownload(normalized, body.quality));
+}
+
+async function handleYoutubeDownload(req, res) {
+  let body;
+  try {
+    body = await readJson(req);
+  } catch {
+    sendJson(res, 400, { error: 'Request body must be valid JSON.' });
+    return;
+  }
+
+  const normalized = normalizeYoutubeUrl(body.url);
+  if (!normalized.ok) {
+    sendJson(res, 400, { error: normalized.error });
+    return;
+  }
+
+  try {
+    const downloadData = await extractYoutubeMedia(normalized, body.quality);
+    sendJson(res, 200, downloadData);
+  } catch (err) {
+    sendJson(res, 422, { error: err.message || 'Unable to extract YouTube video media.' });
+  }
 }
 
 async function handleFileDelivery(req, res) {
@@ -197,6 +224,11 @@ export function createApp() {
 
     if (req.method === 'POST' && req.url === '/api/download/x') {
       await handleXDownload(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/download/youtube') {
+      await handleYoutubeDownload(req, res);
       return;
     }
 
