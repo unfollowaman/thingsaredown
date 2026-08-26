@@ -2,6 +2,7 @@
 
 import { normalizeInstagramUrl } from './instagram.js';
 import { normalizeXUrl } from './x.js';
+import { normalizeYoutubeUrl } from './youtube.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const urlInput = document.getElementById('media-url');
@@ -30,7 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
     },
     youtube: {
       platform: 'youtube',
-      endpoint: null,
+      endpoint: '/api/download/youtube',
       url: 'https://youtube.com/watch?v=dQw4w9WgXcQ',
       label: '✓ YouTube link detected',
       title: 'Ultra HD Cinematic Video · 03:45',
@@ -64,12 +65,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const inputVal = (val || '').toLowerCase().trim();
     const instagramResult = normalizeInstagramUrl(inputVal);
     const xResult = normalizeXUrl(inputVal);
+    const youtubeResult = normalizeYoutubeUrl(inputVal);
 
     if (instagramResult.ok) {
       return platformSamples.instagram;
     } else if (xResult.ok) {
       return platformSamples.x;
-    } else if (inputVal.includes('youtube.com') || inputVal.includes('youtu.be')) {
+    } else if (youtubeResult.ok || inputVal.includes('youtube.com') || inputVal.includes('youtu.be')) {
       return platformSamples.youtube;
     } else if (inputVal.includes('t.me') || inputVal.includes('telegram.org') || inputVal.includes('telegram.me')) {
       return platformSamples.telegram;
@@ -142,7 +144,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         throw new Error(xResult.error);
       } else if (platform.platform === 'youtube') {
-        throw new Error('YouTube downloads are not connected yet.');
+        const youtubeResult = normalizeYoutubeUrl(val);
+        if (youtubeResult.ok) {
+          return {
+            sample: platform,
+            normalized: youtubeResult
+          };
+        }
+        throw new Error(youtubeResult.error);
       } else if (platform.platform === 'telegram') {
         throw new Error('Telegram downloads are not connected yet.');
       }
@@ -153,8 +162,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const xResult = normalizeXUrl(val);
       throw new Error(xResult.error);
     }
+    if (inputVal.includes('youtube.com') || inputVal.includes('youtu.be')) {
+      const youtubeResult = normalizeYoutubeUrl(val);
+      throw new Error(youtubeResult.error);
+    }
 
-    throw new Error('Paste a supported Instagram or X/Twitter media URL.');
+    throw new Error('Paste a supported Instagram, YouTube, or X/Twitter media URL.');
   }
 
   function renderDownloadPayload(payload) {

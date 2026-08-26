@@ -39,6 +39,58 @@ test('POST /api/download/instagram returns ready download payload for valid Inst
   }
 });
 
+test('POST /api/download/youtube returns ready download payload for valid YouTube URLs', async () => {
+  const app = createApp();
+  const port = await listen(app);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/download/youtube`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        url: 'https://youtu.be/k6BnSIs3XUQ?si=WUwSQ5f_us33ezxA',
+        quality: '1080p'
+      })
+    });
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(payload.status, 'ready');
+    assert.equal(payload.platform, 'youtube');
+    assert.equal(payload.type, 'video');
+    assert.equal(payload.videoId, 'k6BnSIs3XUQ');
+    assert.ok(payload.downloadUrl);
+    assert.ok(payload.downloadUrl.startsWith('/api/download/file'));
+  } finally {
+    app.close();
+  }
+});
+
+test('POST /api/download/youtube rejects unsupported URLs', async () => {
+  const app = createApp();
+  const port = await listen(app);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/download/youtube`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        url: 'https://example.com/watch?v=123'
+      })
+    });
+    const payload = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.match(payload.error, /Only YouTube URLs/);
+  } finally {
+    app.close();
+  }
+});
+
 test('GET /api/download/file proxies media stream with content-disposition header', async () => {
   const app = createApp();
   const port = await listen(app);
