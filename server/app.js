@@ -3,10 +3,12 @@ import { stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractInstagramMedia, normalizeInstagramUrl } from '../src/instagram.js';
-import { extractXMedia, normalizeXUrl } from '../src/x.js';
-import { extractYoutubeMedia, normalizeYoutubeUrl } from '../src/youtube.js';
+import { normalizeInstagramUrl } from '../src/instagram.js';
+import { normalizeXUrl } from '../src/x.js';
+import { normalizeYoutubeUrl } from '../src/youtube.js';
 import { getTempFile, removeTempFile } from './downloader.js';
+import { cancelJob, createJob, getJob, JOB_STATES } from './jobs.js';
+import { processDownloadJob } from './job_runner.js';
 
 const ROOT = normalize(join(fileURLToPath(new URL('..', import.meta.url))));
 const PUBLIC_ROOT = ROOT;
@@ -125,12 +127,24 @@ async function handleInstagramDownload(req, res) {
     return;
   }
 
-  try {
-    const downloadData = await extractInstagramMedia(normalized, body.quality);
-    sendJson(res, 200, downloadData);
-  } catch (err) {
-    sendJson(res, err.statusCode || 422, { error: err.message || 'Unable to extract Instagram media.' });
-  }
+  const job = createJob({
+    platform: 'instagram',
+    url: normalized.url,
+    quality: body.quality || '1080p'
+  });
+
+  // Start asynchronous download job in background
+  processDownloadJob(job.id).catch((err) => {
+    console.error(`Background job ${job.id} error:`, err);
+  });
+
+  sendJson(res, 202, {
+    id: job.id,
+    jobId: job.id,
+    status: job.status,
+    statusUrl: `/api/download/jobs/${job.id}`,
+    message: 'Download job created successfully.'
+  });
 }
 
 async function handleXDownload(req, res) {
@@ -152,12 +166,24 @@ async function handleXDownload(req, res) {
     return;
   }
 
-  try {
-    const downloadData = await extractXMedia(normalized, body.quality);
-    sendJson(res, 200, downloadData);
-  } catch (err) {
-    sendJson(res, err.statusCode || 422, { error: err.message || 'Unable to extract X/Twitter media.' });
-  }
+  const job = createJob({
+    platform: 'x',
+    url: normalized.url,
+    quality: body.quality || '1080p'
+  });
+
+  // Start asynchronous download job in background
+  processDownloadJob(job.id).catch((err) => {
+    console.error(`Background job ${job.id} error:`, err);
+  });
+
+  sendJson(res, 202, {
+    id: job.id,
+    jobId: job.id,
+    status: job.status,
+    statusUrl: `/api/download/jobs/${job.id}`,
+    message: 'Download job created successfully.'
+  });
 }
 
 async function handleYoutubeDownload(req, res) {
@@ -179,12 +205,49 @@ async function handleYoutubeDownload(req, res) {
     return;
   }
 
-  try {
-    const downloadData = await extractYoutubeMedia(normalized, body.quality);
-    sendJson(res, 200, downloadData);
-  } catch (err) {
-    sendJson(res, err.statusCode || 422, { error: err.message || 'Unable to extract YouTube video media.' });
+  const job = createJob({
+    platform: 'youtube',
+    url: normalized.url,
+    quality: body.quality || '1080p'
+  });
+
+  // Start asynchronous download job in background
+  processDownloadJob(job.id).catch((err) => {
+    console.error(`Background job ${job.id} error:`, err);
+  });
+
+  sendJson(res, 202, {
+    id: job.id,
+    jobId: job.id,
+    status: job.status,
+    statusUrl: `/api/download/jobs/${job.id}`,
+    message: 'Download job created successfully.'
+  });
+}
+
+function handleGetJobStatus(req, res, jobId) {
+  const job = getJob(jobId);
+  if (!job) {
+    sendJson(res, 404, { error: 'Job not found.' });
+    return;
   }
+  sendJson(res, 200, job);
+}
+
+function handleCancelJob(req, res, jobId) {
+  const job = getJob(jobId);
+  if (!job) {
+    sendJson(res, 404, { error: 'Job not found.' });
+    return;
+  }
+
+  const cancelled = cancelJob(jobId);
+  if (!cancelled) {
+    sendJson(res, 400, { error: 'Job cannot be cancelled in its current state.', status: job.status });
+    return;
+  }
+
+  sendJson(res, 200, getJob(jobId));
 }
 
 async function handleFileDelivery(req, res) {
@@ -382,6 +445,31 @@ export function createApp() {
         if (req.method === 'POST' && req.url === '/api/download/youtube') {
           await handleYoutubeDownload(req, res);
           return;
+        }
+
+        // Job status: GET /api/download/jobs/:id
+        if ((req.method === 'GET' || req.method === 'HEAD') && parsedUrl.pathname.startsWith('/api/download/jobs/')) {
+          const pathSegments = parsedUrl.pathname.split('/').filter(Boolean);
+          if (pathSegments.length === 4 && pathSegments[0] === 'api' && pathSegments[1] === 'download' && pathSegments[2] === 'jobs') {
+            const jobId = pathSegments[3];
+            handleGetJobStatus(req, res, jobId);
+            return;
+          }
+          if (pathSegments.length === 5 && pathSegments[0] === 'api' && pathSegments[1] === 'download' && pathSegments[2] === 'jobs' && pathSegments[4] === 'cancel' && req.method === 'POST') {
+            const jobId = pathSegments[3];
+            handleCancelJob(req, res, jobId);
+            return;
+          }
+        }
+
+        // Job cancel: POST /api/download/jobs/:id/cancel
+        if (req.method === 'POST' && parsedUrl.pathname.startsWith('/api/download/jobs/')) {
+          const pathSegments = parsedUrl.pathname.split('/').filter(Boolean);
+          if (pathSegments.length === 5 && pathSegments[0] === 'api' && pathSegments[1] === 'download' && pathSegments[2] === 'jobs' && pathSegments[4] === 'cancel') {
+            const jobId = pathSegments[3];
+            handleCancelJob(req, res, jobId);
+            return;
+          }
         }
 
         if ((req.method === 'GET' || req.method === 'HEAD') && parsedUrl.pathname === '/api/download/file') {
