@@ -131,7 +131,8 @@ export async function extractMediaInfo(targetUrl) {
     '--dump-json',
     '--no-warnings',
     '--no-playlist',
-    '--socket-timeout', '10'
+    '--socket-timeout', '10',
+    '--js-runtimes', 'deno,node'
   ];
 
   if (ffmpegDir) {
@@ -266,6 +267,7 @@ export async function downloadMedia({ url, quality = '1080p', platform = 'media'
     '--no-warnings',
     '--no-playlist',
     '--socket-timeout', '15',
+    '--js-runtimes', 'deno,node',
     '--newline',
     '--progress-template', 'ytdljob:%(progress.status)s|%(progress._percent_str)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress._speed_str)s|%(progress._eta_str)s',
     '-o', outputTemplate
