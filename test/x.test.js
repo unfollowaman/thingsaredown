@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildPendingXDownload, normalizeXUrl } from '../src/x.js';
+import { normalizeXUrl } from '../src/x.js';
 
 test('normalizes X status URLs', () => {
   const result = normalizeXUrl('https://x.com/tech/status/1758291048291?s=20');
@@ -34,15 +34,4 @@ test('rejects X/Twitter URLs without status IDs', () => {
 
   assert.equal(result.ok, false);
   assert.match(result.error, /missing its status identifier/);
-});
-
-test('builds pending download metadata for the X API response', () => {
-  const normalized = normalizeXUrl('https://x.com/tech/status/1758291048291');
-  const result = buildPendingXDownload(normalized, 'Audio');
-
-  assert.equal(result.status, 'metadata_ready');
-  assert.equal(result.platform, 'x');
-  assert.equal(result.type, 'status');
-  assert.equal(result.requestedQuality, 'Audio');
-  assert.equal(result.downloadUrl, null);
 });

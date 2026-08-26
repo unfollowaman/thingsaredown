@@ -4,8 +4,9 @@ import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractInstagramMedia, normalizeInstagramUrl } from '../src/instagram.js';
-import { buildPendingXDownload, normalizeXUrl } from '../src/x.js';
+import { extractXMedia, normalizeXUrl } from '../src/x.js';
 import { extractYoutubeMedia, normalizeYoutubeUrl } from '../src/youtube.js';
+import { getTempFile, removeTempFile } from './downloader.js';
 
 const ROOT = normalize(join(fileURLToPath(new URL('..', import.meta.url))));
 const PUBLIC_ROOT = ROOT;
@@ -128,7 +129,7 @@ async function handleInstagramDownload(req, res) {
     const downloadData = await extractInstagramMedia(normalized, body.quality);
     sendJson(res, 200, downloadData);
   } catch (err) {
-    sendJson(res, 422, { error: err.message || 'Unable to extract Instagram Reel media.' });
+    sendJson(res, err.statusCode || 422, { error: err.message || 'Unable to extract Instagram media.' });
   }
 }
 
@@ -151,7 +152,12 @@ async function handleXDownload(req, res) {
     return;
   }
 
-  sendJson(res, 202, buildPendingXDownload(normalized, body.quality));
+  try {
+    const downloadData = await extractXMedia(normalized, body.quality);
+    sendJson(res, 200, downloadData);
+  } catch (err) {
+    sendJson(res, err.statusCode || 422, { error: err.message || 'Unable to extract X/Twitter media.' });
+  }
 }
 
 async function handleYoutubeDownload(req, res) {
@@ -177,17 +183,56 @@ async function handleYoutubeDownload(req, res) {
     const downloadData = await extractYoutubeMedia(normalized, body.quality);
     sendJson(res, 200, downloadData);
   } catch (err) {
-    sendJson(res, 422, { error: err.message || 'Unable to extract YouTube video media.' });
+    sendJson(res, err.statusCode || 422, { error: err.message || 'Unable to extract YouTube video media.' });
   }
 }
 
 async function handleFileDelivery(req, res) {
   const reqUrl = new URL(req.url, 'http://localhost');
+  const token = reqUrl.searchParams.get('token');
   const targetUrl = reqUrl.searchParams.get('url');
   const filename = reqUrl.searchParams.get('filename') || 'download.mp4';
 
+  if (token) {
+    const tempFile = getTempFile(token);
+    if (!tempFile) {
+      sendJson(res, 404, { error: 'File token expired or invalid.' });
+      return;
+    }
+
+    try {
+      const stats = await stat(tempFile.filePath);
+      const isAudio = filename.endsWith('.mp3');
+      const contentType = isAudio ? 'audio/mpeg' : 'video/mp4';
+
+      res.writeHead(200, {
+        'content-type': contentType,
+        'content-length': stats.size,
+        'content-disposition': `attachment; filename="${encodeURIComponent(filename)}"`
+      });
+
+      const stream = createReadStream(tempFile.filePath);
+      stream.pipe(res);
+
+      const cleanup = () => removeTempFile(token);
+      res.on('finish', cleanup);
+      res.on('close', cleanup);
+      stream.on('error', () => {
+        cleanup();
+        if (!res.headersSent) {
+          sendJson(res, 500, { error: 'Failed to read downloaded file.' });
+        }
+      });
+      return;
+    } catch {
+      removeTempFile(token);
+      sendJson(res, 404, { error: 'File no longer exists on disk.' });
+      return;
+    }
+  }
+
   if (!targetUrl) {
-    sendJson(res, 400, { error: 'Missing target file URL.' });
+    sendJson(res, 400, { error: 'Missing target file URL or token.' });
     return;
   }
 

@@ -1,3 +1,5 @@
+import { extractMediaInfo, downloadMedia } from '../server/downloader.js';
+
 const X_HOSTS = new Set(['x.com', 'www.x.com', 'mobile.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com']);
 
 function cleanStatusId(id) {
@@ -79,20 +81,31 @@ export function normalizeXUrl(rawUrl) {
   };
 }
 
-export function buildPendingXDownload(normalized, quality = '1080p') {
+export async function extractXMedia(normalized, quality = '1080p') {
+  if (!normalized || !normalized.ok) {
+    throw new Error('Invalid X/Twitter URL provided.');
+  }
+
+  const info = await extractMediaInfo(normalized.url);
+  const downloadResult = await downloadMedia({
+    url: normalized.url,
+    quality,
+    platform: 'x'
+  });
+
   return {
-    status: 'metadata_ready',
+    status: 'ready',
     platform: 'x',
     type: normalized.type,
     username: normalized.username,
     statusId: normalized.statusId,
     canonicalUrl: normalized.url,
-    requestedQuality: quality,
-    title: `X/Twitter status ${normalized.statusId}`,
-    thumbnail: null,
-    duration: null,
-    formats: [],
-    downloadUrl: null,
-    nextStep: 'Connect a compliant X/Twitter media extraction provider or first-party ingestion service.'
+    requestedQuality: quality || '1080p',
+    title: info.title || `X post by ${normalized.username}`,
+    thumbnail: info.thumbnail,
+    duration: info.duration,
+    filename: downloadResult.filename,
+    formats: info.formats,
+    downloadUrl: downloadResult.downloadUrl
   };
 }
