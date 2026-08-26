@@ -24,8 +24,8 @@ document.addEventListener('DOMContentLoaded', () => {
       endpoint: '/api/download/instagram',
       url: 'https://instagram.com/reel/C3x9P2xL8aZ',
       label: '✓ Instagram link detected',
-      title: 'Summer reel pack · 00:34',
-      details: 'MP4 · 1080p · 24.8 MB',
+      title: 'Instagram Reel',
+      details: 'MP4 · Select quality',
       thumbBg: 'linear-gradient(135deg, #ff2d55, #8b5cf6)',
       icon: '◎'
     },
@@ -34,8 +34,8 @@ document.addEventListener('DOMContentLoaded', () => {
       endpoint: '/api/download/youtube',
       url: 'https://youtube.com/watch?v=dQw4w9WgXcQ',
       label: '✓ YouTube link detected',
-      title: 'Ultra HD Cinematic Video · 03:45',
-      details: 'MP4 · 4K 60fps · 142.5 MB',
+      title: 'YouTube Video',
+      details: 'MP4 · Select quality',
       thumbBg: 'linear-gradient(135deg, #ff0033, #e60000)',
       icon: '▶'
     },
@@ -44,8 +44,8 @@ document.addEventListener('DOMContentLoaded', () => {
       endpoint: '/api/download/x',
       url: 'https://x.com/tech/status/1758291048291',
       label: '✓ X (Twitter) link detected',
-      title: 'Product Launch Reveal · 00:15',
-      details: 'MP4 · 1080p · 12.3 MB',
+      title: 'X/Twitter Post',
+      details: 'MP4 · Select quality',
       thumbBg: 'linear-gradient(135deg, #171717, #333333)',
       icon: '𝕏'
     },
@@ -54,7 +54,7 @@ document.addEventListener('DOMContentLoaded', () => {
       endpoint: null,
       url: 'https://t.me/media_channel/8492',
       label: '✓ Telegram link detected',
-      title: 'Broadcast Highlight Clip · 01:20',
+      title: 'Broadcast Highlight Clip',
       details: 'MP4 · 720p · 18.1 MB',
       thumbBg: 'linear-gradient(135deg, #229ed9, #0088cc)',
       icon: '✈'
@@ -91,8 +91,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } else if (val.trim().length > 0) {
       if (detectPill) detectPill.textContent = '✓ Media link detected';
-      if (mediaTitle) mediaTitle.textContent = 'Media stream detected';
-      if (mediaDetails) mediaDetails.textContent = 'MP4 · Auto Quality · Variable size';
+      if (mediaTitle) mediaTitle.textContent = 'Media link entered';
+      if (mediaDetails) mediaDetails.textContent = 'Ready to download';
     } else {
       if (detectPill) detectPill.textContent = '✓ Instagram link detected';
       if (mediaTitle) mediaTitle.textContent = 'Summer reel pack · 00:34';
@@ -175,11 +175,27 @@ document.addEventListener('DOMContentLoaded', () => {
       progressFill.style.width = payload.downloadUrl ? '100%' : '65%';
     }
 
-    if (mediaTitle) mediaTitle.textContent = payload.title || 'Instagram Media';
+    if (mediaTitle) mediaTitle.textContent = payload.title || 'Media File';
     if (mediaDetails) {
-      mediaDetails.textContent = payload.downloadUrl
-        ? `${payload.requestedQuality || '1080p'} · Ready`
-        : `${payload.requestedQuality || '1080p'} · Extractor setup required`;
+      const parts = [];
+      if (payload.duration) parts.push(payload.duration);
+      if (payload.requestedQuality) parts.push(payload.requestedQuality);
+      parts.push('Ready');
+      mediaDetails.textContent = parts.join(' · ');
+    }
+
+    if (payload.formats && Array.isArray(payload.formats) && qualitySelect) {
+      const currentSelected = qualitySelect.value;
+      qualitySelect.innerHTML = '';
+      for (const fmt of payload.formats) {
+        const opt = document.createElement('option');
+        opt.value = fmt;
+        opt.textContent = fmt;
+        if (fmt === currentSelected || fmt === payload.requestedQuality) {
+          opt.selected = true;
+        }
+        qualitySelect.appendChild(opt);
+      }
     }
 
     if (payload.thumbnail && thumb) {
@@ -187,7 +203,7 @@ document.addEventListener('DOMContentLoaded', () => {
       thumb.textContent = '';
     }
 
-    setDownloadState(payload.downloadUrl ? 'Downloading' : 'Setup needed', Boolean(payload.downloadUrl));
+    setDownloadState(payload.downloadUrl ? 'Downloaded' : 'Error', Boolean(payload.downloadUrl));
 
     if (payload.downloadUrl) {
       triggerBrowserDownload(payload.downloadUrl, payload.filename);
@@ -284,7 +300,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => {
           downloadBtn.disabled = false;
           downloadBtn.innerHTML = origText;
-        }, 2000);
+        }, 3000);
       } catch (err) {
         if (progressFill) {
           progressFill.style.width = '0%';
@@ -295,7 +311,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => {
           downloadBtn.disabled = false;
           downloadBtn.innerHTML = origText;
-        }, 2500);
+        }, 3000);
       }
     });
   }

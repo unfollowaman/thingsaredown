@@ -1,3 +1,5 @@
+import { extractMediaInfo, downloadMedia } from '../server/downloader.js';
+
 const YOUTUBE_HOSTS = new Set([
   'youtube.com',
   'www.youtube.com',
@@ -73,9 +75,7 @@ export function normalizeYoutubeUrl(rawUrl) {
     };
   }
 
-  // Clean video ID in case extra characters appended
   videoId = videoId.trim();
-
   const canonicalUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
   return {
@@ -92,52 +92,25 @@ export async function extractYoutubeMedia(normalized, quality = '1080p') {
     throw new Error('Invalid YouTube URL provided.');
   }
 
-  const videoId = normalized.videoId;
-  const type = normalized.type;
-  let videoUrl = null;
-  let thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-  let title = `YouTube Video · ${videoId}`;
-  let duration = '03:45';
-
-  try {
-    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(normalized.url)}&format=json`;
-    const res = await fetch(oembedUrl);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.title) {
-        title = data.title;
-      }
-      if (data.thumbnail_url) {
-        thumbnailUrl = data.thumbnail_url;
-      }
-    }
-  } catch {
-    // fallback to defaults
-  }
-
-  if (!videoUrl) {
-    videoUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
-  }
-
-  const isAudio = quality && String(quality).toLowerCase() === 'audio';
-  const fileExt = isAudio ? 'mp3' : 'mp4';
-  const filename = `youtube-${type}-${videoId}.${fileExt}`;
-
-  const downloadUrl = `/api/download/file?url=${encodeURIComponent(videoUrl)}&filename=${encodeURIComponent(filename)}`;
+  const info = await extractMediaInfo(normalized.url);
+  const downloadResult = await downloadMedia({
+    url: normalized.url,
+    quality,
+    platform: 'youtube'
+  });
 
   return {
     status: 'ready',
     platform: 'youtube',
-    type,
-    videoId,
+    type: normalized.type,
+    videoId: normalized.videoId,
     canonicalUrl: normalized.url,
     requestedQuality: quality || '1080p',
-    title,
-    thumbnail: thumbnailUrl,
-    duration,
-    filename,
-    formats: ['1080p', '720p', 'Audio'],
-    downloadUrl,
-    directStreamUrl: videoUrl
+    title: info.title,
+    thumbnail: info.thumbnail,
+    duration: info.duration,
+    filename: downloadResult.filename,
+    formats: info.formats,
+    downloadUrl: downloadResult.downloadUrl
   };
 }
