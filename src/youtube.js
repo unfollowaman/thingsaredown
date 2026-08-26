@@ -26,6 +26,13 @@ export function normalizeYoutubeUrl(rawUrl) {
     };
   }
 
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return {
+      ok: false,
+      error: 'Only http and https URLs are supported.'
+    };
+  }
+
   const hostname = parsed.hostname.toLowerCase();
   if (!YOUTUBE_HOSTS.has(hostname)) {
     return {
