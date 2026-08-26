@@ -170,43 +170,79 @@ document.addEventListener('DOMContentLoaded', () => {
     throw new Error('Paste a supported Instagram, YouTube, or X/Twitter media URL.');
   }
 
-  function renderDownloadPayload(payload) {
-    if (progressFill) {
-      progressFill.style.width = payload.downloadUrl ? '100%' : '65%';
-    }
+  async function pollJobUntilCompletion(jobId) {
+    const pollIntervalMs = 1500;
+    const statusEndpoint = `/api/download/jobs/${jobId}`;
 
-    if (mediaTitle) mediaTitle.textContent = payload.title || 'Media File';
-    if (mediaDetails) {
-      const parts = [];
-      if (payload.duration) parts.push(payload.duration);
-      if (payload.requestedQuality) parts.push(payload.requestedQuality);
-      parts.push('Ready');
-      mediaDetails.textContent = parts.join(' · ');
-    }
-
-    if (payload.formats && Array.isArray(payload.formats) && qualitySelect) {
-      const currentSelected = qualitySelect.value;
-      qualitySelect.innerHTML = '';
-      for (const fmt of payload.formats) {
-        const opt = document.createElement('option');
-        opt.value = fmt;
-        opt.textContent = fmt;
-        if (fmt === currentSelected || fmt === payload.requestedQuality) {
-          opt.selected = true;
-        }
-        qualitySelect.appendChild(opt);
+    while (true) {
+      const res = await fetch(statusEndpoint);
+      if (!res.ok) {
+        throw new Error(`Failed to query job status (HTTP ${res.status}).`);
       }
-    }
 
-    if (payload.thumbnail && thumb) {
-      thumb.style.background = `url("${payload.thumbnail}") center/cover no-repeat`;
-      thumb.textContent = '';
-    }
+      const job = await res.json();
 
-    setDownloadState(payload.downloadUrl ? 'Downloaded' : 'Error', Boolean(payload.downloadUrl));
+      if (job.title && mediaTitle) {
+        mediaTitle.textContent = job.title;
+      }
+      if (job.thumbnail && thumb) {
+        thumb.style.background = `url("${job.thumbnail}") center/cover no-repeat`;
+        thumb.textContent = '';
+      }
 
-    if (payload.downloadUrl) {
-      triggerBrowserDownload(payload.downloadUrl, payload.filename);
+      if (job.formats && Array.isArray(job.formats) && job.formats.length > 0 && qualitySelect) {
+        const currentSelected = qualitySelect.value;
+        qualitySelect.innerHTML = '';
+        for (const fmt of job.formats) {
+          const opt = document.createElement('option');
+          opt.value = fmt;
+          opt.textContent = fmt;
+          if (fmt === currentSelected || fmt === job.quality) {
+            opt.selected = true;
+          }
+          qualitySelect.appendChild(opt);
+        }
+      }
+
+      if (job.status === 'queued' || job.status === 'extracting') {
+        setDownloadState(job.status === 'queued' ? 'Queued...' : 'Extracting info...');
+        if (progressFill) progressFill.style.width = '15%';
+      } else if (job.status === 'downloading') {
+        const pct = Math.max(15, Math.min(95, job.progress || 20));
+        if (progressFill) progressFill.style.width = `${pct}%`;
+
+        const detailsParts = [];
+        if (job.speed) detailsParts.push(job.speed);
+        if (job.eta) detailsParts.push(`ETA ${job.eta}`);
+        if (detailsParts.length === 0) detailsParts.push('Downloading media...');
+
+        if (mediaDetails) mediaDetails.textContent = detailsParts.join(' · ');
+        setDownloadState(`Downloading ${Math.round(job.progress || 0)}%`);
+      } else if (job.status === 'processing') {
+        if (progressFill) progressFill.style.width = '98%';
+        if (mediaDetails) mediaDetails.textContent = 'Processing & merging video streams...';
+        setDownloadState('Processing...');
+      } else if (job.status === 'completed') {
+        if (progressFill) progressFill.style.width = '100%';
+        if (mediaDetails) {
+          const parts = [];
+          if (job.duration) parts.push(job.duration);
+          if (job.quality) parts.push(job.quality);
+          parts.push('Ready');
+          mediaDetails.textContent = parts.join(' · ');
+        }
+        setDownloadState('Downloaded', true);
+        if (job.downloadUrl) {
+          triggerBrowserDownload(job.downloadUrl, job.filename);
+        }
+        return job;
+      } else if (job.status === 'failed') {
+        throw new Error(job.error || 'Download failed on server.');
+      } else if (job.status === 'cancelled') {
+        throw new Error('Download was cancelled.');
+      }
+
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
     }
   }
 
@@ -269,8 +305,8 @@ document.addEventListener('DOMContentLoaded', () => {
       setDownloadState('Preparing...');
 
       if (progressFill) {
-        progressFill.style.transition = 'width 1.2s ease-in-out';
-        progressFill.style.width = '25%';
+        progressFill.style.transition = 'width 0.5s ease-in-out';
+        progressFill.style.width = '10%';
       }
 
       try {
@@ -290,13 +326,19 @@ document.addEventListener('DOMContentLoaded', () => {
             quality: qualitySelect ? qualitySelect.value : '1080p'
           })
         });
-        const payload = await response.json();
+        const initialPayload = await response.json();
 
         if (!response.ok) {
-          throw new Error(payload.error || `Unable to prepare this ${target.sample.label.replace('✓ ', '').replace(' link detected', '')} download.`);
+          throw new Error(initialPayload.error || `Unable to start this ${target.sample.label.replace('✓ ', '').replace(' link detected', '')} download.`);
         }
 
-        renderDownloadPayload(payload);
+        const jobId = initialPayload.id || initialPayload.jobId;
+        if (!jobId) {
+          throw new Error('Server did not return a valid download job ID.');
+        }
+
+        await pollJobUntilCompletion(jobId);
+
         setTimeout(() => {
           downloadBtn.disabled = false;
           downloadBtn.innerHTML = origText;

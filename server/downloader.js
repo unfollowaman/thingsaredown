@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
@@ -193,7 +193,69 @@ export async function extractMediaInfo(targetUrl) {
   }
 }
 
-export async function downloadMedia({ url, quality = '1080p', platform = 'media' }) {
+export function parseProgressLine(line) {
+  if (!line || typeof line !== 'string') return null;
+  const str = line.trim();
+
+  // Handle structured template line: "ytdljob:<status>|<percent>|<downloaded>|<total>|<speed>|<eta>"
+  if (str.startsWith('ytdljob:')) {
+    const parts = str.slice(8).split('|');
+    const statusStr = parts[0]?.trim() || 'downloading';
+    const percentStr = parts[1]?.replace('%', '').trim();
+    const percent = percentStr ? parseFloat(percentStr) : 0;
+    const downloaded = parts[2] ? parseInt(parts[2], 10) : 0;
+    const total = parts[3] ? parseInt(parts[3], 10) : 0;
+    const speed = parts[4]?.trim() || null;
+    const eta = parts[5]?.trim() || null;
+
+    let state = 'downloading';
+    if (statusStr === 'finished' || percent >= 100) {
+      state = 'processing';
+    }
+
+    return {
+      status: state,
+      progress: Math.min(99, Math.max(0, isNaN(percent) ? 0 : percent)),
+      downloadedBytes: isNaN(downloaded) ? 0 : downloaded,
+      totalBytes: isNaN(total) ? 0 : total,
+      speed: speed && speed !== 'NA' ? speed : null,
+      eta: eta && eta !== 'NA' ? eta : null
+    };
+  }
+
+  // Detect FFmpeg / post-processing indicators
+  if (
+    str.includes('[Merger]') ||
+    str.includes('[ExtractAudio]') ||
+    str.includes('[VideoConvertor]') ||
+    str.includes('[FixupM3u8]') ||
+    str.includes('[ffmpeg]') ||
+    str.includes('[Exec]')
+  ) {
+    return {
+      status: 'processing',
+      progress: 99,
+      speed: null,
+      eta: null
+    };
+  }
+
+  // Standard fallback yt-dlp line: "[download]  45.2% of  10.50MiB at  2.10MiB/s ETA 00:05"
+  const stdMatch = str.match(/\[download\]\s+([\d.]+)%\s+of\s+~?\s*([\d.]+\s*\w+)?\s+at\s+([^\s]+)\s+ETA\s+([^\s]+)/i);
+  if (stdMatch) {
+    const percent = parseFloat(stdMatch[1]);
+    return {
+      status: percent >= 100 ? 'processing' : 'downloading',
+      progress: Math.min(99, Math.max(0, isNaN(percent) ? 0 : percent)),
+      speed: stdMatch[3] !== 'NA' ? stdMatch[3] : null,
+      eta: stdMatch[4] !== 'NA' ? stdMatch[4] : null
+    };
+  }
+
+  return null;
+}
+
+export async function downloadMedia({ url, quality = '1080p', platform = 'media', onProgress, onProcess }) {
   const { ytdlpPath } = getBinaryPaths();
   const ffmpegDir = getFfmpegDir();
 
@@ -204,6 +266,8 @@ export async function downloadMedia({ url, quality = '1080p', platform = 'media'
     '--no-warnings',
     '--no-playlist',
     '--socket-timeout', '15',
+    '--newline',
+    '--progress-template', 'ytdljob:%(progress.status)s|%(progress._percent_str)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress._speed_str)s|%(progress._eta_str)s',
     '-o', outputTemplate
   ];
 
@@ -227,46 +291,103 @@ export async function downloadMedia({ url, quality = '1080p', platform = 'media'
 
   args.push(url);
 
-  try {
-    await execFileAsync(ytdlpPath, args, {
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: 120000
-    });
-
-    const files = readdirSync(TEMP_DIR);
-    const matchedFile = files.find((f) => f.startsWith(`${fileId}-`));
-
-    if (!matchedFile) {
-      throw new Error('Downloaded file was not created.');
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawn(ytdlpPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (err) {
+      return reject(new Error(`Failed to spawn yt-dlp process: ${err.message}`));
     }
 
-    const fullPath = join(TEMP_DIR, matchedFile);
-    const safeFilename = `${platform}-${fileId}${extname(matchedFile)}`;
+    if (onProcess && typeof onProcess === 'function') {
+      onProcess(child);
+    }
 
-    const registered = registerTempFile(fullPath, safeFilename);
+    let stderrBuffer = '';
+    let lineRemainder = '';
 
-    return {
-      token: registered.token,
-      filename: registered.filename,
-      filePath: fullPath,
-      downloadUrl: `/api/download/file?token=${registered.token}&filename=${encodeURIComponent(registered.filename)}`
+    const handleData = (chunk) => {
+      const text = lineRemainder + chunk.toString('utf8');
+      const lines = text.split(/\r?\n|\r/);
+      lineRemainder = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line) continue;
+        const parsed = parseProgressLine(line);
+        if (parsed && onProgress && typeof onProgress === 'function') {
+          onProgress(parsed);
+        }
+      }
     };
-  } catch (err) {
+
+    child.stdout.on('data', handleData);
+    child.stderr.on('data', (chunk) => {
+      stderrBuffer += chunk.toString('utf8');
+      handleData(chunk);
+    });
+
+    child.on('error', (err) => {
+      cleanupPartialFiles(fileId);
+      reject(new Error(`yt-dlp error: ${err.message}`));
+    });
+
+    child.on('close', (code, signal) => {
+      if (signal === 'SIGTERM' || signal === 'SIGKILL') {
+        cleanupPartialFiles(fileId);
+        const e = new Error('Download process was terminated.');
+        e.statusCode = 499;
+        return reject(e);
+      }
+
+      if (code !== 0) {
+        cleanupPartialFiles(fileId);
+        const errorMsg = stderrBuffer || `Process exited with code ${code}`;
+        if (errorMsg.includes('Requested format is not available')) {
+          const e = new Error(`Requested quality '${quality}' is not available for this media.`);
+          e.statusCode = 422;
+          return reject(e);
+        }
+        const e = new Error(`Download failed: ${errorMsg.slice(0, 200)}`);
+        e.statusCode = 422;
+        return reject(e);
+      }
+
+      try {
+        const files = readdirSync(TEMP_DIR);
+        const matchedFile = files.find((f) => f.startsWith(`${fileId}-`));
+
+        if (!matchedFile) {
+          throw new Error('Downloaded file was not created.');
+        }
+
+        const fullPath = join(TEMP_DIR, matchedFile);
+        const safeFilename = `${platform}-${fileId}${extname(matchedFile)}`;
+
+        const registered = registerTempFile(fullPath, safeFilename);
+
+        resolve({
+          token: registered.token,
+          filename: registered.filename,
+          filePath: fullPath,
+          downloadUrl: `/api/download/file?token=${registered.token}&filename=${encodeURIComponent(registered.filename)}`
+        });
+      } catch (err) {
+        cleanupPartialFiles(fileId);
+        const e = new Error(`Finalizing download failed: ${err.message}`);
+        e.statusCode = 500;
+        reject(e);
+      }
+    });
+  });
+}
+
+function cleanupPartialFiles(fileId) {
+  try {
     const files = readdirSync(TEMP_DIR);
     for (const f of files) {
       if (f.startsWith(`${fileId}-`)) {
         try { unlinkSync(join(TEMP_DIR, f)); } catch {}
       }
     }
-
-    const errorMsg = err.stderr || err.message || '';
-    if (errorMsg.includes('Requested format is not available')) {
-      const e = new Error(`Requested quality '${quality}' is not available for this media.`);
-      e.statusCode = 422;
-      throw e;
-    }
-    const e = new Error(`Download failed: ${errorMsg.slice(0, 200)}`);
-    e.statusCode = 422;
-    throw e;
-  }
+  } catch {}
 }
