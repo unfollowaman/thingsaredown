@@ -24,6 +24,13 @@ export function normalizeXUrl(rawUrl) {
     };
   }
 
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return {
+      ok: false,
+      error: 'Only http and https URLs are supported.'
+    };
+  }
+
   const hostname = parsed.hostname.toLowerCase();
   if (!X_HOSTS.has(hostname)) {
     return {

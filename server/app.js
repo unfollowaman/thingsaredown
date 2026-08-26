@@ -24,9 +24,7 @@ const ALLOWED_STREAM_DOMAINS = [
   'googleapis.com',
   'youtube.com',
   'youtu.be',
-  'googlevideo.com',
-  '127.0.0.1',
-  'localhost'
+  'googlevideo.com'
 ];
 
 function isAllowedUrl(urlString) {
@@ -36,10 +34,49 @@ function isAllowedUrl(urlString) {
       return false;
     }
     const hostname = parsed.hostname.toLowerCase();
+
+    // Explicitly reject IP address literals and localhost
+    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(hostname) || hostname.startsWith('[') || hostname === 'localhost') {
+      return false;
+    }
+
     return ALLOWED_STREAM_DOMAINS.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
   } catch {
     return false;
   }
+}
+
+const ipRequests = new Map();
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const MAX_REQUESTS_PER_WINDOW = 60;
+let activeRequests = 0;
+const MAX_CONCURRENT_REQUESTS = 15;
+
+export function resetRateLimiter() {
+  ipRequests.clear();
+}
+
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.socket?.remoteAddress || '127.0.0.1';
+}
+
+function isRateLimited(ip) {
+  const now = Date.now();
+  let entry = ipRequests.get(ip);
+  if (!entry || now - entry.startTime > RATE_LIMIT_WINDOW_MS) {
+    entry = { count: 1, startTime: now };
+    ipRequests.set(ip, entry);
+    return false;
+  }
+  entry.count += 1;
+  if (entry.count > MAX_REQUESTS_PER_WINDOW) {
+    return true;
+  }
+  return false;
 }
 
 function sendJson(res, statusCode, body) {
@@ -47,10 +84,17 @@ function sendJson(res, statusCode, body) {
   res.end(JSON.stringify(body));
 }
 
-async function readJson(req) {
+async function readJson(req, maxBytes = 65536) {
   const chunks = [];
+  let totalBytes = 0;
 
   for await (const chunk of req) {
+    totalBytes += chunk.length;
+    if (totalBytes > maxBytes) {
+      const err = new Error('Payload size exceeds limit.');
+      err.statusCode = 413;
+      throw err;
+    }
     chunks.push(chunk);
   }
 
@@ -65,7 +109,11 @@ async function handleInstagramDownload(req, res) {
   let body;
   try {
     body = await readJson(req);
-  } catch {
+  } catch (err) {
+    if (err.statusCode === 413) {
+      sendJson(res, 413, { error: 'Request body exceeds maximum size limit.' });
+      return;
+    }
     sendJson(res, 400, { error: 'Request body must be valid JSON.' });
     return;
   }
@@ -88,7 +136,11 @@ async function handleXDownload(req, res) {
   let body;
   try {
     body = await readJson(req);
-  } catch {
+  } catch (err) {
+    if (err.statusCode === 413) {
+      sendJson(res, 413, { error: 'Request body exceeds maximum size limit.' });
+      return;
+    }
     sendJson(res, 400, { error: 'Request body must be valid JSON.' });
     return;
   }
@@ -106,7 +158,11 @@ async function handleYoutubeDownload(req, res) {
   let body;
   try {
     body = await readJson(req);
-  } catch {
+  } catch (err) {
+    if (err.statusCode === 413) {
+      sendJson(res, 413, { error: 'Request body exceeds maximum size limit.' });
+      return;
+    }
     sendJson(res, 400, { error: 'Request body must be valid JSON.' });
     return;
   }
@@ -192,11 +248,26 @@ async function handleFileDelivery(req, res) {
 
 async function serveStatic(req, res) {
   const url = new URL(req.url, 'http://localhost');
-  const safePath = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
-  const filePath = join(PUBLIC_ROOT, safePath === '/' ? 'index.html' : safePath);
+  const pathname = decodeURIComponent(url.pathname);
+  const safePath = normalize(pathname).replace(/^(\.\.[/\\])+/, '');
 
-  if (!filePath.startsWith(PUBLIC_ROOT)) {
-    res.writeHead(403);
+  // Restrict to intentionally designated public frontend assets only: index.html and /src/*
+  const isIndex = safePath === '/' || safePath === '/index.html' || safePath === '\\index.html' || safePath === '\\';
+  const isSrcAsset = safePath.startsWith('/src/') || safePath.startsWith('\\src\\') || safePath.startsWith('src/') || safePath.startsWith('src\\');
+
+  if (!isIndex && !isSrcAsset) {
+    res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('Forbidden');
+    return;
+  }
+
+  const filePath = join(PUBLIC_ROOT, isIndex ? 'index.html' : safePath);
+
+  const allowedIndexFile = join(PUBLIC_ROOT, 'index.html');
+  const allowedSrcDir = join(PUBLIC_ROOT, 'src');
+
+  if (filePath !== allowedIndexFile && !filePath.startsWith(allowedSrcDir + '/') && !filePath.startsWith(allowedSrcDir + '\\')) {
+    res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
     res.end('Forbidden');
     return;
   }
@@ -217,25 +288,67 @@ async function serveStatic(req, res) {
 
 export function createApp() {
   return createServer(async (req, res) => {
-    if (req.method === 'POST' && req.url === '/api/download/instagram') {
-      await handleInstagramDownload(req, res);
-      return;
+    // CORS configuration via ALLOWED_ORIGINS environment variable
+    const origin = req.headers.origin;
+    const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
+    if (allowedOriginsEnv && origin) {
+      const allowedList = allowedOriginsEnv.split(',').map((s) => s.trim());
+      if (allowedList.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, HEAD');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      }
     }
 
-    if (req.method === 'POST' && req.url === '/api/download/x') {
-      await handleXDownload(req, res);
-      return;
-    }
-
-    if (req.method === 'POST' && req.url === '/api/download/youtube') {
-      await handleYoutubeDownload(req, res);
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
       return;
     }
 
     const parsedUrl = new URL(req.url, 'http://localhost');
-    if ((req.method === 'GET' || req.method === 'HEAD') && parsedUrl.pathname === '/api/download/file') {
-      await handleFileDelivery(req, res);
-      return;
+    const isApi = parsedUrl.pathname.startsWith('/api/');
+
+    if (isApi) {
+      const clientIp = getClientIp(req);
+      if (isRateLimited(clientIp)) {
+        res.setHeader('Retry-After', '60');
+        sendJson(res, 429, { error: 'Too many requests. Please try again later.' });
+        return;
+      }
+
+      if (activeRequests >= MAX_CONCURRENT_REQUESTS) {
+        sendJson(res, 503, { error: 'Server busy. Too many concurrent requests.' });
+        return;
+      }
+
+      activeRequests += 1;
+      try {
+        if (req.method === 'POST' && req.url === '/api/download/instagram') {
+          await handleInstagramDownload(req, res);
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/api/download/x') {
+          await handleXDownload(req, res);
+          return;
+        }
+
+        if (req.method === 'POST' && req.url === '/api/download/youtube') {
+          await handleYoutubeDownload(req, res);
+          return;
+        }
+
+        if ((req.method === 'GET' || req.method === 'HEAD') && parsedUrl.pathname === '/api/download/file') {
+          await handleFileDelivery(req, res);
+          return;
+        }
+
+        sendJson(res, 405, { error: 'Method not allowed.' });
+        return;
+      } finally {
+        activeRequests -= 1;
+      }
     }
 
     if (req.method === 'GET' || req.method === 'HEAD') {
